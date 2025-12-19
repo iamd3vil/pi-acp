@@ -1,18 +1,25 @@
-import type { AgentSideConnection, ContentBlock, McpServer, SessionUpdate, ToolCallContent, ToolKind } from "@agentclientprotocol/sdk"
-import { RequestError } from "@agentclientprotocol/sdk"
-import { PiRpcProcess, type PiRpcEvent } from "../pi-rpc/process.js"
-import { SessionStore } from "./session-store.js"
-import { toolResultToText } from "./translate/pi-tools.js"
-import { expandSlashCommand, type FileSlashCommand } from "./slash-commands.js"
+import type {
+  AgentSideConnection,
+  ContentBlock,
+  McpServer,
+  SessionUpdate,
+  ToolCallContent,
+  ToolKind
+} from '@agentclientprotocol/sdk'
+import { RequestError } from '@agentclientprotocol/sdk'
+import { PiRpcProcess, type PiRpcEvent } from '../pi-rpc/process.js'
+import { SessionStore } from './session-store.js'
+import { toolResultToText } from './translate/pi-tools.js'
+import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
 
 type SessionCreateParams = {
   cwd: string
   mcpServers: McpServer[]
   conn: AgentSideConnection
-  fileCommands?: import("./slash-commands.js").FileSlashCommand[]
+  fileCommands?: import('./slash-commands.js').FileSlashCommand[]
 }
 
-export type StopReason = "end_turn" | "cancelled" | "error"
+export type StopReason = 'end_turn' | 'cancelled' | 'error'
 
 type PendingTurn = {
   resolve: (reason: StopReason) => void
@@ -32,12 +39,12 @@ export class SessionManager {
     // Let pi manage session persistence in its default location (~/.pi/agent/sessions/...)
     // so sessions are visible to the regular `pi` CLI.
     const proc = await PiRpcProcess.spawn({
-      cwd: params.cwd,
+      cwd: params.cwd
     })
 
     const state = (await proc.getState()) as any
-    const sessionId = typeof state?.sessionId === "string" ? state.sessionId : crypto.randomUUID()
-    const sessionFile = typeof state?.sessionFile === "string" ? state.sessionFile : null
+    const sessionId = typeof state?.sessionId === 'string' ? state.sessionId : crypto.randomUUID()
+    const sessionFile = typeof state?.sessionFile === 'string' ? state.sessionFile : null
 
     if (sessionFile) {
       this.store.upsert({ sessionId, cwd: params.cwd, sessionFile })
@@ -49,7 +56,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc,
       conn: params.conn,
-      fileCommands: params.fileCommands ?? [],
+      fileCommands: params.fileCommands ?? []
     })
 
     this.sessions.set(sessionId, session)
@@ -66,10 +73,7 @@ export class SessionManager {
    * Used by session/load: create a session object bound to an existing sessionId/proc
    * if it isn't already registered.
    */
-  getOrCreate(
-    sessionId: string,
-    params: SessionCreateParams & { proc: PiRpcProcess },
-  ): PiAcpSession {
+  getOrCreate(sessionId: string, params: SessionCreateParams & { proc: PiRpcProcess }): PiAcpSession {
     const existing = this.sessions.get(sessionId)
     if (existing) return existing
 
@@ -79,7 +83,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc: params.proc,
       conn: params.conn,
-      fileCommands: params.fileCommands ?? [],
+      fileCommands: params.fileCommands ?? []
     })
 
     this.sessions.set(sessionId, session)
@@ -120,11 +124,11 @@ export class PiAcpSession {
     this.conn = opts.conn
     this.fileCommands = opts.fileCommands ?? []
 
-    this.proc.onEvent((ev) => this.handlePiEvent(ev))
+    this.proc.onEvent(ev => this.handlePiEvent(ev))
   }
 
   async prompt(message: string, attachments: unknown[] = []): Promise<StopReason> {
-    if (this.pendingTurn) throw RequestError.invalidRequest("A prompt is already in progress")
+    if (this.pendingTurn) throw RequestError.invalidRequest('A prompt is already in progress')
 
     this.cancelRequested = false
 
@@ -136,11 +140,11 @@ export class PiAcpSession {
     })
 
     // Kick off pi, but completion is determined by pi events (`turn_end`) not the RPC response.
-    this.proc.prompt(expandedMessage, attachments).catch((err) => {
+    this.proc.prompt(expandedMessage, attachments).catch(err => {
       // If the subprocess errors before we get a `turn_end`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
       void this.flushEmits().finally(() => {
-        const reason: StopReason = this.cancelRequested ? "cancelled" : "error"
+        const reason: StopReason = this.cancelRequested ? 'cancelled' : 'error'
         this.pendingTurn?.resolve(reason)
         this.pendingTurn = null
       })
@@ -165,8 +169,8 @@ export class PiAcpSession {
       .then(() =>
         this.conn.sessionUpdate({
           sessionId: this.sessionId,
-          update,
-        }),
+          update
+        })
       )
       .catch(() => {
         // Ignore notification errors (client may have gone away). We still want
@@ -179,68 +183,68 @@ export class PiAcpSession {
   }
 
   private handlePiEvent(ev: PiRpcEvent) {
-    const type = String((ev as any).type ?? "")
+    const type = String((ev as any).type ?? '')
 
     switch (type) {
-      case "message_update": {
+      case 'message_update': {
         const ame = (ev as any).assistantMessageEvent
-        if (ame?.type === "text_delta" && typeof ame.delta === "string") {
+        if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
           this.emit({
-            sessionUpdate: "agent_message_chunk",
-            content: { type: "text", text: ame.delta } satisfies ContentBlock,
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: ame.delta } satisfies ContentBlock
           })
         }
         // (MVP) ignore thinking/toolcall deltas here.
         break
       }
 
-      case "tool_execution_start": {
+      case 'tool_execution_start': {
         const toolCallId = String((ev as any).toolCallId ?? crypto.randomUUID())
-        const toolName = String((ev as any).toolName ?? "tool")
+        const toolName = String((ev as any).toolName ?? 'tool')
         const args = (ev as any).args
 
         this.currentToolCalls.add(toolCallId)
 
         // Spec-style lifecycle: announce the tool call as pending, then mark in_progress.
         this.emit({
-          sessionUpdate: "tool_call",
+          sessionUpdate: 'tool_call',
           toolCallId,
           title: toolName,
           kind: toToolKind(toolName),
-          status: "pending",
-          rawInput: args,
+          status: 'pending',
+          rawInput: args
         })
 
         this.emit({
-          sessionUpdate: "tool_call_update",
+          sessionUpdate: 'tool_call_update',
           toolCallId,
-          status: "in_progress",
+          status: 'in_progress'
         })
 
         break
       }
 
-      case "tool_execution_update": {
-        const toolCallId = String((ev as any).toolCallId ?? "")
+      case 'tool_execution_update': {
+        const toolCallId = String((ev as any).toolCallId ?? '')
         if (!toolCallId) break
 
         const partial = (ev as any).partialResult
         const text = toolResultToText(partial)
 
         this.emit({
-          sessionUpdate: "tool_call_update",
+          sessionUpdate: 'tool_call_update',
           toolCallId,
-          status: "in_progress",
+          status: 'in_progress',
           content: text
-            ? ([{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[])
+            ? ([{ type: 'content', content: { type: 'text', text } }] satisfies ToolCallContent[])
             : undefined,
-          rawOutput: partial,
+          rawOutput: partial
         })
         break
       }
 
-      case "tool_execution_end": {
-        const toolCallId = String((ev as any).toolCallId ?? "")
+      case 'tool_execution_end': {
+        const toolCallId = String((ev as any).toolCallId ?? '')
         if (!toolCallId) break
 
         const result = (ev as any).result
@@ -248,24 +252,24 @@ export class PiAcpSession {
         const text = toolResultToText(result)
 
         this.emit({
-          sessionUpdate: "tool_call_update",
+          sessionUpdate: 'tool_call_update',
           toolCallId,
-          status: isError ? "failed" : "completed",
+          status: isError ? 'failed' : 'completed',
           content: text
-            ? ([{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[])
+            ? ([{ type: 'content', content: { type: 'text', text } }] satisfies ToolCallContent[])
             : undefined,
-          rawOutput: result,
+          rawOutput: result
         })
 
         this.currentToolCalls.delete(toolCallId)
         break
       }
 
-      case "turn_end": {
+      case 'turn_end': {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
         void this.flushEmits().finally(() => {
-          const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn"
+          const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
           this.pendingTurn?.resolve(reason)
           this.pendingTurn = null
         })
@@ -280,15 +284,14 @@ export class PiAcpSession {
 
 function toToolKind(toolName: string): ToolKind {
   switch (toolName) {
-    case "read":
-      return "read"
-    case "write":
-    case "edit":
-      return "edit"
-    case "bash":
-      return "execute"
+    case 'read':
+      return 'read'
+    case 'write':
+    case 'edit':
+      return 'edit'
+    case 'bash':
+      return 'execute'
     default:
-      return "other"
+      return 'other'
   }
 }
-
