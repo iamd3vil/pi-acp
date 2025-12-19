@@ -13,6 +13,7 @@ test("PiAcpSession: emits agent_message_chunk for text_delta", async () => {
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
+    fileCommands: [],
   });
 
   proc.emit({
@@ -41,6 +42,7 @@ test("PiAcpSession: emits tool_call + tool_call_update + completes", async () =>
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
+    fileCommands: [],
   });
 
   proc.emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { cmd: "ls" } });
@@ -78,6 +80,7 @@ test("PiAcpSession: prompt resolves end_turn on turn_end", async () => {
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
+    fileCommands: [],
   });
 
   const p = session.prompt("hello");
@@ -96,6 +99,7 @@ test("PiAcpSession: cancel flips stopReason to cancelled", async () => {
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
+    fileCommands: [],
   });
 
   const p = session.prompt("hello");
@@ -117,6 +121,7 @@ test("PiAcpSession: rejects concurrent prompt", async () => {
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
+    fileCommands: [],
   });
 
   const first = session.prompt("hello");

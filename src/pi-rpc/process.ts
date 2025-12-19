@@ -8,6 +8,8 @@ type PiRpcCommand =
   // Model
   | { type: "get_available_models"; id?: string }
   | { type: "set_model"; id?: string; provider: string; modelId: string }
+  // Thinking
+  | { type: "set_thinking_level"; id?: string; level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" }
   // Session
   | { type: "switch_session"; id?: string; sessionPath: string }
   // Messages
@@ -134,6 +136,11 @@ export class PiRpcProcess {
     const res = await this.request({ type: "set_model", provider, modelId })
     if (!res.success) throw new Error(`pi set_model failed: ${res.error ?? JSON.stringify(res.data)}`)
     return res.data
+  }
+
+  async setThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): Promise<void> {
+    const res = await this.request({ type: "set_thinking_level", level })
+    if (!res.success) throw new Error(`pi set_thinking_level failed: ${res.error ?? JSON.stringify(res.data)}`)
   }
 
   async switchSession(sessionPath: string): Promise<void> {

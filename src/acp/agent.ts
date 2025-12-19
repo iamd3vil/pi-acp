@@ -12,6 +12,8 @@ import {
   type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
+  type SetSessionModeRequest,
+  type SetSessionModeResponse,
   type StopReason,
 } from "@agentclientprotocol/sdk";
 import { SessionManager } from "./session.js";
@@ -19,9 +21,12 @@ import { SessionStore } from "./session-store.js";
 import { PiRpcProcess } from "../pi-rpc/process.js";
 import { normalizePiAssistantText, normalizePiMessageText } from "./translate/pi-messages.js";
 import { promptToPiMessage } from "./translate/prompt.js";
+import { loadSlashCommands, toAvailableCommands } from "./slash-commands.js";
 import { isAbsolute } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 import { fileURLToPath } from "node:url";
 
 const pkg = readNearestPackageJson(import.meta.url);
@@ -69,25 +74,40 @@ export class PiAcpAgent implements ACPAgent {
       );
     }
 
+    const fileCommands = loadSlashCommands(params.cwd);
+
     // Pi doesn't support mcpServers, but we accept and store.
     const session = await this.sessions.create({
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       conn: this.conn,
+      fileCommands,
     });
 
     const models = await getModelState(session.proc);
+    const thinking = await getThinkingState(session.proc);
 
-    return {
+    const response = {
       sessionId: session.sessionId,
       models,
-      // Pi doesn't have session "modes".
-      modes: {
-        availableModes: [],
-        currentModeId: "default",
-      },
+      modes: thinking,
       _meta: {},
     };
+
+    // Advertise slash commands (ACP: available_commands_update)
+    // Important: some clients (e.g. Zed) will ignore notifications for an unknown sessionId.
+    // So we must send this *after* the session/new response has been delivered.
+    setTimeout(() => {
+      void this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: toAvailableCommands(fileCommands),
+        },
+      });
+    }, 0);
+
+    return response;
   }
 
   async authenticate(_params: AuthenticateRequest) {
@@ -137,11 +157,14 @@ export class PiAcpAgent implements ACPAgent {
       sessionPath: stored.sessionFile,
     });
 
+    const fileCommands = loadSlashCommands(params.cwd);
+
     const session = this.sessions.getOrCreate(params.sessionId, {
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       conn: this.conn,
       proc,
+      fileCommands,
     });
 
     // (Optional) ensure mapping stays fresh.
@@ -186,15 +209,26 @@ export class PiAcpAgent implements ACPAgent {
     }
 
     const models = await getModelState(proc);
+    const thinking = await getThinkingState(proc);
 
-    return {
+    const response = {
       models,
-      modes: {
-        availableModes: [],
-        currentModeId: "default",
-      },
+      modes: thinking,
       _meta: {},
     };
+
+    // Advertise slash commands after the response so the client knows the session exists.
+    setTimeout(() => {
+      void this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: toAvailableCommands(fileCommands),
+        },
+      });
+    }, 0);
+
+    return response;
   }
 
   async unstable_setSessionModel(params: {
@@ -234,11 +268,58 @@ export class PiAcpAgent implements ACPAgent {
     await session.proc.setModel(provider, modelId);
   }
 
-  async setSessionMode(): Promise<never> {
-    throw RequestError.methodNotFound("setSessionMode");
+  async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
+    const session = this.sessions.get(params.sessionId);
+
+    const mode = String(params.modeId);
+    if (!isThinkingLevel(mode)) {
+      throw RequestError.invalidParams(`Unknown modeId: ${mode}`);
+    }
+
+    await session.proc.setThinkingLevel(mode);
+
+    // Let the client know the current mode changed (keeps the dropdown in sync).
+    void this.conn.sessionUpdate({
+      sessionId: session.sessionId,
+      update: {
+        sessionUpdate: "current_mode_update",
+        currentModeId: mode,
+      },
+    });
+
+    return {};
   }
 }
 
+function isThinkingLevel(x: string): x is ThinkingLevel {
+  return x === "off" || x === "minimal" || x === "low" || x === "medium" || x === "high" || x === "xhigh";
+}
+
+async function getThinkingState(proc: PiRpcProcess): Promise<{
+  availableModes: Array<{ id: string; name: string; description?: string | null }>;
+  currentModeId: string;
+}> {
+  // Ask pi for current thinking level.
+  let current: ThinkingLevel = "medium";
+  try {
+    const state = (await proc.getState()) as any;
+    const tl = typeof state?.thinkingLevel === "string" ? state.thinkingLevel : null;
+    if (tl && isThinkingLevel(tl)) current = tl;
+  } catch {
+    // ignore
+  }
+
+  const available: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
+  return {
+    currentModeId: current,
+    availableModes: available.map((id) => ({
+      id,
+      name: `Thinking: ${id}`,
+      description: null,
+    })),
+  };
+}
 
 async function getModelState(proc: PiRpcProcess): Promise<{
   availableModels: ModelInfo[];

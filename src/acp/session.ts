@@ -3,11 +3,13 @@ import { RequestError } from "@agentclientprotocol/sdk"
 import { PiRpcProcess, type PiRpcEvent } from "../pi-rpc/process.js"
 import { SessionStore } from "./session-store.js"
 import { toolResultToText } from "./translate/pi-tools.js"
+import { expandSlashCommand, type FileSlashCommand } from "./slash-commands.js"
 
 type SessionCreateParams = {
   cwd: string
   mcpServers: McpServer[]
   conn: AgentSideConnection
+  fileCommands?: import("./slash-commands.js").FileSlashCommand[]
 }
 
 export type StopReason = "end_turn" | "cancelled" | "error"
@@ -47,6 +49,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc,
       conn: params.conn,
+      fileCommands: params.fileCommands ?? [],
     })
 
     this.sessions.set(sessionId, session)
@@ -76,6 +79,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc: params.proc,
       conn: params.conn,
+      fileCommands: params.fileCommands ?? [],
     })
 
     this.sessions.set(sessionId, session)
@@ -90,6 +94,7 @@ export class PiAcpSession {
 
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
+  private readonly fileCommands: FileSlashCommand[]
 
   // Used to map abort semantics to ACP stopReason.
   private cancelRequested = false
@@ -106,12 +111,14 @@ export class PiAcpSession {
     mcpServers: McpServer[]
     proc: PiRpcProcess
     conn: AgentSideConnection
+    fileCommands?: FileSlashCommand[]
   }) {
     this.sessionId = opts.sessionId
     this.cwd = opts.cwd
     this.mcpServers = opts.mcpServers
     this.proc = opts.proc
     this.conn = opts.conn
+    this.fileCommands = opts.fileCommands ?? []
 
     this.proc.onEvent((ev) => this.handlePiEvent(ev))
   }
@@ -121,12 +128,15 @@ export class PiAcpSession {
 
     this.cancelRequested = false
 
+    // pi RPC mode disables slash command expansion, so we do it here.
+    const expandedMessage = expandSlashCommand(message, this.fileCommands)
+
     const turnPromise = new Promise<StopReason>((resolve, reject) => {
       this.pendingTurn = { resolve, reject }
     })
 
     // Kick off pi, but completion is determined by pi events (`turn_end`) not the RPC response.
-    this.proc.prompt(message, attachments).catch((err) => {
+    this.proc.prompt(expandedMessage, attachments).catch((err) => {
       // If the subprocess errors before we get a `turn_end`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
       void this.flushEmits().finally(() => {
