@@ -9,6 +9,7 @@ import {
   type InitializeResponse,
   type LoadSessionRequest,
   type LoadSessionResponse,
+  type ModelInfo,
   type NewSessionRequest,
   type PromptRequest,
   type PromptResponse,
@@ -75,13 +76,12 @@ export class PiAcpAgent implements ACPAgent {
       conn: this.conn,
     });
 
+    const models = await getModelState(session.proc);
+
     return {
       sessionId: session.sessionId,
-      // Be explicit to satisfy clients that expect these fields.
-      models: {
-        availableModels: [],
-        currentModelId: "default",
-      },
+      models,
+      // Pi doesn't have session "modes".
       modes: {
         availableModes: [],
         currentModeId: "default",
@@ -180,11 +180,53 @@ export class PiAcpAgent implements ACPAgent {
       }
     }
 
-    return null;
+    const models = await getModelState(proc);
+
+    return {
+      models,
+      modes: {
+        availableModes: [],
+        currentModeId: "default",
+      },
+      _meta: {},
+    };
   }
 
-  async unstable_setSessionModel(): Promise<never> {
-    throw RequestError.methodNotFound("unstable_setSessionModel");
+  async unstable_setSessionModel(params: {
+    sessionId: string;
+    modelId: string;
+  }): Promise<void> {
+    const session = this.sessions.get(params.sessionId);
+
+    // Accept either:
+    //  - "provider/model" (preferred, matches how we advertise)
+    //  - "model" (fallback, we try to resolve via available models)
+    let provider: string | null = null;
+    let modelId: string | null = null;
+
+    if (params.modelId.includes("/")) {
+      const [p, ...rest] = params.modelId.split("/");
+      provider = p;
+      modelId = rest.join("/");
+    } else {
+      modelId = params.modelId;
+    }
+
+    if (!provider) {
+      const data = (await session.proc.getAvailableModels()) as any;
+      const models: any[] = Array.isArray(data?.models) ? data.models : [];
+      const found = models.find((m) => String(m?.id) === modelId);
+      if (found) {
+        provider = String(found.provider);
+        modelId = String(found.id);
+      }
+    }
+
+    if (!provider || !modelId) {
+      throw RequestError.invalidParams(`Unknown modelId: ${params.modelId}`);
+    }
+
+    await session.proc.setModel(provider, modelId);
   }
 
   async setSessionMode(): Promise<never> {
@@ -280,6 +322,59 @@ function guessFileNameFromMime(mimeType: string): string {
           ? "webp"
           : "bin";
   return `attachment.${ext}`;
+}
+
+async function getModelState(proc: PiRpcProcess): Promise<{
+  availableModels: ModelInfo[];
+  currentModelId: string;
+} | null> {
+  // Ask pi for available models.
+  let availableModels: ModelInfo[] = [];
+  try {
+    const data = (await proc.getAvailableModels()) as any;
+    const models: any[] = Array.isArray(data?.models) ? data.models : [];
+    availableModels = models
+      .map((m) => {
+        const provider = String(m?.provider ?? "").trim();
+        const id = String(m?.id ?? "").trim();
+        if (!provider || !id) return null;
+
+        const name = String(m?.name ?? id);
+        return {
+          modelId: `${provider}/${id}`,
+          name: `${provider}/${name}`,
+          description: null,
+        } satisfies ModelInfo;
+      })
+      .filter(Boolean) as ModelInfo[];
+  } catch {
+    // ignore
+  }
+
+  // Ask pi what model is currently active.
+  let currentModelId: string | null = null;
+  try {
+    const state = (await proc.getState()) as any;
+    const model = state?.model;
+    if (model && typeof model === "object") {
+      const provider = String((model as any).provider ?? "").trim();
+      const id = String((model as any).id ?? "").trim();
+      if (provider && id) currentModelId = `${provider}/${id}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!availableModels.length && !currentModelId) return null;
+
+  // Fallback if current model is unknown: use first in list.
+  if (!currentModelId)
+    currentModelId = availableModels[0]?.modelId ?? "default";
+
+  return {
+    availableModels,
+    currentModelId,
+  };
 }
 
 function readNearestPackageJson(metaUrl: string): {

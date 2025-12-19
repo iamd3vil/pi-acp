@@ -20,6 +20,11 @@ export class SessionManager {
   private sessions = new Map<string, PiAcpSession>()
   private readonly store = new SessionStore()
 
+  /** Get a registered session if it exists (no throw). */
+  maybeGet(sessionId: string): PiAcpSession | undefined {
+    return this.sessions.get(sessionId)
+  }
+
   async create(params: SessionCreateParams): Promise<PiAcpSession> {
     // Let pi manage session persistence in its default location (~/.pi/agent/sessions/...)
     // so sessions are visible to the regular `pi` CLI.
@@ -77,12 +82,12 @@ export class SessionManager {
   }
 }
 
-class PiAcpSession {
+export class PiAcpSession {
   readonly sessionId: string
   readonly cwd: string
   readonly mcpServers: McpServer[]
 
-  private readonly proc: PiRpcProcess
+  readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
 
   // Used to map abort semantics to ACP stopReason.

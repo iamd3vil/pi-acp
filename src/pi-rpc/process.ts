@@ -5,7 +5,12 @@ type PiRpcCommand =
   | { type: "prompt"; id?: string; message: string; attachments?: unknown[] }
   | { type: "abort"; id?: string }
   | { type: "get_state"; id?: string }
+  // Model
+  | { type: "get_available_models"; id?: string }
+  | { type: "set_model"; id?: string; provider: string; modelId: string }
+  // Session
   | { type: "switch_session"; id?: string; sessionPath: string }
+  // Messages
   | { type: "get_messages"; id?: string }
 
 type PiRpcResponse = {
@@ -116,6 +121,18 @@ export class PiRpcProcess {
   async getState(): Promise<unknown> {
     const res = await this.request({ type: "get_state" })
     if (!res.success) throw new Error(`pi get_state failed: ${res.error ?? JSON.stringify(res.data)}`)
+    return res.data
+  }
+
+  async getAvailableModels(): Promise<unknown> {
+    const res = await this.request({ type: "get_available_models" })
+    if (!res.success) throw new Error(`pi get_available_models failed: ${res.error ?? JSON.stringify(res.data)}`)
+    return res.data
+  }
+
+  async setModel(provider: string, modelId: string): Promise<unknown> {
+    const res = await this.request({ type: "set_model", provider, modelId })
+    if (!res.success) throw new Error(`pi set_model failed: ${res.error ?? JSON.stringify(res.data)}`)
     return res.data
   }
 
