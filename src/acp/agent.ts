@@ -449,7 +449,19 @@ export class PiAcpAgent implements ACPAgent {
 
         const uri = `file://${resultPath}`
 
-        // Provide a resource link (clients may render it as clickable).
+        // Emit a short prefix + a resource link. Many clients concatenate chunks into a single
+        // assistant message, so this avoids the "link + duplicate plain text" look.
+        await this.conn.sessionUpdate({
+          sessionId: session.sessionId,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'Session exported: '
+            }
+          }
+        })
+
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
@@ -459,19 +471,7 @@ export class PiAcpAgent implements ACPAgent {
               name: `pi-session-${safeSessionId}.html`,
               uri,
               mimeType: 'text/html',
-              title: 'Exported session'
-            }
-          }
-        })
-
-        // Plain-text fallback.
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: {
-              type: 'text',
-              text: `Exported session to ${resultPath}`
+              title: 'Session exported'
             }
           }
         })
