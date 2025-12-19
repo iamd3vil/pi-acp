@@ -103,7 +103,14 @@ export class PiAcpSession {
   // Used to map abort semantics to ACP stopReason.
   private cancelRequested = false
   private pendingTurn: PendingTurn | null = null
-  private currentToolCalls = new Set<string>()
+  // Track tool call statuses and ensure they are monotonic (pending -> in_progress -> completed).
+  // Some pi events can arrive out of order (e.g. late toolcall_* deltas after execution starts),
+  // and clients may hide progress if we ever downgrade back to `pending`.
+  private currentToolCalls = new Map<string, 'pending' | 'in_progress'>()
+
+  // pi can emit multiple `turn_end` events for a single user prompt (e.g. after tool_use).
+  // The overall agent loop completes when `agent_end` is emitted.
+  private inAgentLoop = false
 
   // Ensure `session/update` notifications are sent in order and can be awaited
   // before completing a `session/prompt` request.
@@ -131,6 +138,7 @@ export class PiAcpSession {
     if (this.pendingTurn) throw RequestError.invalidRequest('A prompt is already in progress')
 
     this.cancelRequested = false
+    this.inAgentLoop = false
 
     // pi RPC mode disables slash command expansion, so we do it here.
     const expandedMessage = expandSlashCommand(message, this.fileCommands)
@@ -139,14 +147,17 @@ export class PiAcpSession {
       this.pendingTurn = { resolve, reject }
     })
 
-    // Kick off pi, but completion is determined by pi events (`turn_end`) not the RPC response.
+    // Kick off pi, but completion is determined by pi events, not the RPC response.
+    // Important: pi may emit multiple `turn_end` events (e.g. when the model requests tools).
+    // The full prompt is finished when we see `agent_end`.
     this.proc.prompt(expandedMessage, attachments).catch(err => {
-      // If the subprocess errors before we get a `turn_end`, treat as error unless cancelled.
+      // If the subprocess errors before we get an `agent_end`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
       void this.flushEmits().finally(() => {
         const reason: StopReason = this.cancelRequested ? 'cancelled' : 'error'
         this.pendingTurn?.resolve(reason)
         this.pendingTurn = null
+        this.inAgentLoop = false
       })
       void err
     })
@@ -188,13 +199,72 @@ export class PiAcpSession {
     switch (type) {
       case 'message_update': {
         const ame = (ev as any).assistantMessageEvent
+
+        // Stream assistant text.
         if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
           this.emit({
             sessionUpdate: 'agent_message_chunk',
             content: { type: 'text', text: ame.delta } satisfies ContentBlock
           })
+          break
         }
-        // (MVP) ignore thinking/toolcall deltas here.
+
+        // Surface tool calls ASAP so clients (e.g. Zed) can show a tool-in-use/loading UI
+        // while the model is still streaming tool call args.
+        if (ame?.type === 'toolcall_start' || ame?.type === 'toolcall_delta' || ame?.type === 'toolcall_end') {
+          const toolCall =
+            // pi sometimes includes the tool call directly on the event
+            (ame as any)?.toolCall ??
+            // ...and always includes it in the partial assistant message at contentIndex
+            (ame as any)?.partial?.content?.[(ame as any)?.contentIndex ?? 0]
+
+          const toolCallId = String((toolCall as any)?.id ?? '')
+          const toolName = String((toolCall as any)?.name ?? 'tool')
+
+          if (toolCallId) {
+            const rawInput =
+              (toolCall as any)?.arguments && typeof (toolCall as any).arguments === 'object'
+                ? (toolCall as any).arguments
+                : (() => {
+                    const s = String((toolCall as any)?.partialArgs ?? '')
+                    if (!s) return undefined
+                    try {
+                      return JSON.parse(s)
+                    } catch {
+                      return { partialArgs: s }
+                    }
+                  })()
+
+            const existingStatus = this.currentToolCalls.get(toolCallId)
+            // IMPORTANT: never downgrade status (e.g. if we already marked in_progress via tool_execution_start).
+            const status = existingStatus ?? 'pending'
+
+            if (!existingStatus) {
+              this.currentToolCalls.set(toolCallId, 'pending')
+              this.emit({
+                sessionUpdate: 'tool_call',
+                toolCallId,
+                title: toolName,
+                kind: toToolKind(toolName),
+                status,
+                rawInput
+              })
+            } else {
+              // Best-effort: keep rawInput updated while args are streaming.
+              // Keep the existing status (pending or in_progress).
+              this.emit({
+                sessionUpdate: 'tool_call_update',
+                toolCallId,
+                status,
+                rawInput
+              })
+            }
+          }
+
+          break
+        }
+
+        // (MVP) ignore other delta types (thinking, etc.) for now.
         break
       }
 
@@ -203,23 +273,26 @@ export class PiAcpSession {
         const toolName = String((ev as any).toolName ?? 'tool')
         const args = (ev as any).args
 
-        this.currentToolCalls.add(toolCallId)
-
-        // Spec-style lifecycle: announce the tool call as pending, then mark in_progress.
-        this.emit({
-          sessionUpdate: 'tool_call',
-          toolCallId,
-          title: toolName,
-          kind: toToolKind(toolName),
-          status: 'pending',
-          rawInput: args
-        })
-
-        this.emit({
-          sessionUpdate: 'tool_call_update',
-          toolCallId,
-          status: 'in_progress'
-        })
+        // If we already surfaced the tool call while the model streamed it, just transition.
+        if (!this.currentToolCalls.has(toolCallId)) {
+          this.currentToolCalls.set(toolCallId, 'in_progress')
+          this.emit({
+            sessionUpdate: 'tool_call',
+            toolCallId,
+            title: toolName,
+            kind: toToolKind(toolName),
+            status: 'in_progress',
+            rawInput: args
+          })
+        } else {
+          this.currentToolCalls.set(toolCallId, 'in_progress')
+          this.emit({
+            sessionUpdate: 'tool_call_update',
+            toolCallId,
+            status: 'in_progress',
+            rawInput: args
+          })
+        }
 
         break
       }
@@ -265,13 +338,25 @@ export class PiAcpSession {
         break
       }
 
+      case 'agent_start': {
+        this.inAgentLoop = true
+        break
+      }
+
       case 'turn_end': {
+        // pi uses `turn_end` for sub-steps (e.g. tool_use) and will often start another turn.
+        // Do NOT resolve the ACP `session/prompt` here; wait for `agent_end`.
+        break
+      }
+
+      case 'agent_end': {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
         void this.flushEmits().finally(() => {
           const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
           this.pendingTurn?.resolve(reason)
           this.pendingTurn = null
+          this.inAgentLoop = false
         })
         break
       }

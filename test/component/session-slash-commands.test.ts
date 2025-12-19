@@ -25,8 +25,9 @@ test('PiAcpSession: expands /command before sending to pi', async () => {
 
   const p = session.prompt('/hello world')
 
-  // pi will only resolve prompt on turn_end
+  proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
+  proc.emit({ type: 'agent_end' })
   const reason = await p
 
   assert.equal(reason, 'end_turn')

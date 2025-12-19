@@ -60,11 +60,12 @@ test('PiAcpSession: emits tool_call + tool_call_update + completes', async () =>
 
   await new Promise(r => setTimeout(r, 0))
 
-  assert.equal(conn.updates.length, 4)
+  // tool_execution_start now marks the call as in_progress (we may have already announced it earlier)
+  assert.equal(conn.updates.length, 3)
 
   assert.equal(conn.updates[0]!.update.sessionUpdate, 'tool_call')
   assert.equal((conn.updates[0]!.update as any).toolCallId, 't1')
-  assert.equal((conn.updates[0]!.update as any).status, 'pending')
+  assert.equal((conn.updates[0]!.update as any).status, 'in_progress')
 
   assert.equal(conn.updates[1]!.update.sessionUpdate, 'tool_call_update')
   assert.equal((conn.updates[1]!.update as any).toolCallId, 't1')
@@ -72,14 +73,10 @@ test('PiAcpSession: emits tool_call + tool_call_update + completes', async () =>
 
   assert.equal(conn.updates[2]!.update.sessionUpdate, 'tool_call_update')
   assert.equal((conn.updates[2]!.update as any).toolCallId, 't1')
-  assert.equal((conn.updates[2]!.update as any).status, 'in_progress')
-
-  assert.equal(conn.updates[3]!.update.sessionUpdate, 'tool_call_update')
-  assert.equal((conn.updates[3]!.update as any).toolCallId, 't1')
-  assert.equal((conn.updates[3]!.update as any).status, 'completed')
+  assert.equal((conn.updates[2]!.update as any).status, 'completed')
 })
 
-test('PiAcpSession: prompt resolves end_turn on turn_end', async () => {
+test('PiAcpSession: prompt resolves end_turn on agent_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
@@ -93,7 +90,9 @@ test('PiAcpSession: prompt resolves end_turn on turn_end', async () => {
   })
 
   const p = session.prompt('hello')
+  proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
+  proc.emit({ type: 'agent_end' })
   const reason = await p
   assert.equal(reason, 'end_turn')
 })
@@ -113,7 +112,9 @@ test('PiAcpSession: cancel flips stopReason to cancelled', async () => {
 
   const p = session.prompt('hello')
   await session.cancel()
+  proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
+  proc.emit({ type: 'agent_end' })
   const reason = await p
 
   assert.equal(proc.abortCount, 1)
@@ -136,6 +137,8 @@ test('PiAcpSession: rejects concurrent prompt', async () => {
   const first = session.prompt('hello')
   await assert.rejects(() => session.prompt('again'), /invalid request/i)
 
+  proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
+  proc.emit({ type: 'agent_end' })
   await first
 })
