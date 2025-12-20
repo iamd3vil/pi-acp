@@ -21,7 +21,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: "https://registry.npmjs.org"
+
+      # actions/setup-node writes an authToken placeholder when registry-url is set.
+      # For npm Trusted Publishing (OIDC), ensure no token-based auth is configured.
+      - name: Ensure no npm auth token is configured
+        shell: bash
+        run: |
+          if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
+            sed -i '/:_authToken=/d' "$NPM_CONFIG_USERCONFIG"
+          fi
+          if [ -f "$HOME/.npmrc" ]; then
+            sed -i '/:_authToken=/d' "$HOME/.npmrc"
+          fi
 
       - name: Install
         run: npm ci
