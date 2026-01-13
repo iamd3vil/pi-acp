@@ -238,7 +238,7 @@ export class PiAcpAgent implements ACPAgent {
       if (cmd === 'queue') {
         const modeRaw = String(args[0] ?? '').toLowerCase()
         const state = (await session.proc.getState()) as any
-        const current = String(state?.queueMode ?? '')
+        const current = String(state?.followUpMode ?? state?.steeringMode ?? '')
 
         // If no arg, just report current.
         if (!modeRaw) {
@@ -269,7 +269,10 @@ export class PiAcpAgent implements ACPAgent {
           return { stopReason: 'end_turn' }
         }
 
-        await session.proc.setQueueMode(modeRaw as 'all' | 'one-at-a-time')
+        // pi 0.45+: queue handling is split into follow-up + steering modes.
+        // For the old /queue command, keep them in sync.
+        await session.proc.setFollowUpMode(modeRaw as 'all' | 'one-at-a-time')
+        await session.proc.setSteeringMode(modeRaw as 'all' | 'one-at-a-time')
 
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,

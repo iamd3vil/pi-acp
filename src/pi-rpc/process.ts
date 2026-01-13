@@ -10,8 +10,9 @@ type PiRpcCommand =
   | { type: 'set_model'; id?: string; provider: string; modelId: string }
   // Thinking
   | { type: 'set_thinking_level'; id?: string; level: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' }
-  // Queue Mode
-  | { type: 'set_queue_mode'; id?: string; mode: 'all' | 'one-at-a-time' }
+  // Modes
+  | { type: 'set_follow_up_mode'; id?: string; mode: 'all' | 'one-at-a-time' }
+  | { type: 'set_steering_mode'; id?: string; mode: 'all' | 'one-at-a-time' }
   // Compaction
   | { type: 'compact'; id?: string; customInstructions?: string }
   | { type: 'set_auto_compaction'; id?: string; enabled: boolean }
@@ -159,9 +160,14 @@ export class PiRpcProcess {
     if (!res.success) throw new Error(`pi set_thinking_level failed: ${res.error ?? JSON.stringify(res.data)}`)
   }
 
-  async setQueueMode(mode: 'all' | 'one-at-a-time'): Promise<void> {
-    const res = await this.request({ type: 'set_queue_mode', mode })
-    if (!res.success) throw new Error(`pi set_queue_mode failed: ${res.error ?? JSON.stringify(res.data)}`)
+  async setFollowUpMode(mode: 'all' | 'one-at-a-time'): Promise<void> {
+    const res = await this.request({ type: 'set_follow_up_mode', mode })
+    if (!res.success) throw new Error(`pi set_follow_up_mode failed: ${res.error ?? JSON.stringify(res.data)}`)
+  }
+
+  async setSteeringMode(mode: 'all' | 'one-at-a-time'): Promise<void> {
+    const res = await this.request({ type: 'set_steering_mode', mode })
+    if (!res.success) throw new Error(`pi set_steering_mode failed: ${res.error ?? JSON.stringify(res.data)}`)
   }
 
   async compact(customInstructions?: string): Promise<unknown> {

@@ -1,8 +1,8 @@
 # pi-acp
 
-ACP (Agent Client Protocol) adapter for [`pi`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) aka [shittycodingagent.ai](https://shittycodingagent.ai).
+ACP (Agent Client Protocol) adapter for [`pi`](https://buildwithpi.ai/) coding agent (fka shitty coding agent).
 
-`pi-acp` does not require modifications to pi core and speaks **ACP JSON-RPC 2.0 over stdio** to an ACP client (e.g. an editor) and spawns `pi --mode rpc`, bridging requests/events between the two.
+`pi-acp` communicates **ACP JSON-RPC 2.0 over stdio** to an ACP client (e.g. an editor) and spawns `pi --mode rpc`, bridging requests/events between the two.
 
 ## Status
 

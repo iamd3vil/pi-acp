@@ -91,15 +91,15 @@ function loadCommandsFromDir(dir: string, source: 'user' | 'project', subdir = '
 }
 
 /**
- * Load slash commands from:
- *  - user:    ~/.pi/agent/commands/**\/*.md
- *  - project: <cwd>/.pi/commands/**\/*.md
+ * Load prompt templates from pi's prompt directories (formerly "commands").
+ *  - user:    ~/.pi/agent/prompts/**\/*.md
+ *  - project: <cwd>/.pi/prompts/**\/*.md
  */
 export function loadSlashCommands(cwd: string): FileSlashCommand[] {
   const commands: FileSlashCommand[] = []
 
-  const userDir = join(homedir(), '.pi', 'agent', 'commands')
-  const projectDir = resolve(cwd, '.pi', 'commands')
+  const userDir = join(homedir(), '.pi', 'agent', 'prompts')
+  const projectDir = resolve(cwd, '.pi', 'prompts')
 
   // Match pi ordering: user first, then project.
   commands.push(...loadCommandsFromDir(userDir, 'user'))
