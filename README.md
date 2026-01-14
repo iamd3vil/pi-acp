@@ -1,6 +1,6 @@
 # pi-acp
 
-ACP (Agent Client Protocol) adapter for [`pi`](https://buildwithpi.ai/) coding agent (fka shitty coding agent).
+ACP ([Agent Client Protocol](https://agentclientprotocol.com/overview/introduction)) adapter for [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) coding agent (fka shitty coding agent).
 
 `pi-acp` communicates **ACP JSON-RPC 2.0 over stdio** to an ACP client (e.g. an editor) and spawns `pi --mode rpc`, bridging requests/events between the two.
 
